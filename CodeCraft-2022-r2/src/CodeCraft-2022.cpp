@@ -133,8 +133,12 @@ int main(){
     while (!okay){
         okay = true;
         for (int i = 0; i < n; i++) carry[i] = 0;
-        //for (int i = 0; i < n; i++) cout << cap[i] << ' ';
-        //cout << endl;
+        
+        #ifdef DEBUG
+            for (int i = 0; i < n; i++) cout << cap[i] << ' ';
+            cout << endl;
+        #endif
+
         for (int i = 0; i < m; i++) distb[i].clear();
         for (int t = 0; t < T; t++) {
             int l = t;

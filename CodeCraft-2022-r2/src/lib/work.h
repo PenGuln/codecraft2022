@@ -1,8 +1,9 @@
 namespace work{
     struct Request{
         int val, t, c;
+        double difficulty;
         bool operator < (const Request &b)const{
-            return val < b.val;
+            return difficulty > b.difficulty;
         }
     };
     inline int F(int base, int bw, double rt){
@@ -18,8 +19,13 @@ namespace work{
         vector<Request> req[2];
         for (int t = l; t <= r; t++) {
             for (int i = 0; i < m; i++) 
-                if (demand[t][i] > 0) 
-                    req[0].emplace_back(Request{demand[t][i], t, i});
+                if (demand[t][i] > 0) {
+                    int cnt = 0;
+                    for (int server : p) {
+                        if (qos[server][i] < qos_constraint) cnt += cap[server] / demand[t][i];
+                    }
+                    req[0].push_back(Request{demand[t][i], t, i, 1.0 / cnt});
+                }
         }
         sort(req[0].begin(), req[0].end());
         for (auto r : req[0]){
