@@ -4,14 +4,21 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <map>
+#include <unordered_map>
 #include <cstring>
 #include <algorithm>
 #include <cassert>
 #include "config.h"
-//#define DEBUG
 #include "work.h"
+#define DEBUG
 using namespace std;
+const double eps = 1e-8;
+#ifdef DEBUG
+const string PATH = "data";
+#else
 const string PATH = "/data";
+#endif
 void getlines(vector<string> &lines, string Path){
     lines.clear();
     ifstream inFile(Path, ios::in);
@@ -21,18 +28,34 @@ void getlines(vector<string> &lines, string Path){
     }
     inFile.close();
 }
-void output(const vector<string> &mtime, vector<pair<int, int> > *distb, 
+void output(const vector<vector<int>>& demand, const vector<int>& bandwidth, 
+            const vector<string> &mtime, vector<vector<pair<int, int> >> & distb, 
             const vector<string> &clientid, const vector<string> &serverid, const vector<string> &streamid, 
-            int n, int m, int T) {
-    vector<int> stmlist[n];
+            const int n, const int m, const int T, const int realT, const int base_cost) {
+    vector<vector<int>> stmlist(n);
     vector<pair<int, int> >::iterator ps[m];
+    vector<int> out(n);
+    vector<vector<int> > K(n);
     ofstream fout("/output/solution.txt"); 
     for (int i = 0; i < m; i++) ps[i] = distb[i].begin();
+    
+    #ifdef DEBUG
+        vector<int> ck(m);
+        for (int t = 0; t < T; t++) 
+            for (int i = 0; i < m; i++) if (demand[t][i] > 0) ck[i]++;
+        for (int i = 0; i < m; i++) assert(ck[i] == (int)distb[i].size());
+    #endif
+    
     for (int t = 0; t < T; t++) {
         while (t + 1 < T && mtime[t + 1] == mtime[t]) t++;
+        for (int i = 0; i < n; i++) out[i] = 0;
         for (int i = 0; i < m; i++) {
             for (int j = 0; j < n; j++) stmlist[j].clear();
-            while (ps[i] != distb[i].end() && ps[i]->first <= t) stmlist[ps[i]->second].push_back(ps[i]->first), ps[i]++;
+            while (ps[i] != distb[i].end() && ps[i]->first <= t) {
+                stmlist[ps[i]->second].push_back(ps[i]->first);
+                out[ps[i]->second] += demand[ps[i]->first][i];
+                ++ps[i];
+            }
             fout << clientid[i] << ":";
             int cnt = 0;
             for (int j = 0; j < n; j++) {
@@ -46,9 +69,26 @@ void output(const vector<string> &mtime, vector<pair<int, int> > *distb,
             }
             if (!(t == T - 1 && i == m - 1)) fout << '\n';
         }
+        for (int i = 0; i < n; i++) K[i].push_back(out[i]);
     }
     fout.close();
+
+    #ifdef DEBUG
+        double ans = 0;
+        int w95 = (realT * 95 + 99) / 100;
+        for (int i = 0; i < n; i++){
+            sort(K[i].begin(), K[i].end());
+            long long sum = 0;
+            for (int x : K[i]) sum += x;
+            if (sum > 0) {
+                int W = K[i][w95 - 1];
+                ans += (W <= base_cost) ? base_cost : (1.0 * (W - base_cost) * (W - base_cost) / bandwidth[i] + W);
+            }
+        }
+        cout << ans << endl;
+    #endif
 }
+unordered_map<int, int> vis[900000];
 int main(){
     ios::sync_with_stdio(false);
     string str;
@@ -60,7 +100,7 @@ int main(){
     vector<vector<int>> demand(T);
     vector<string> mtime(T), streamid(T);
 
-    for (int i = 0; i < lines.size(); i++) {
+    for (int i = 0; i <= T; i++) {
         istringstream sin(lines[i]);
         int id = 0;
         if (i == 0) {
@@ -86,7 +126,7 @@ int main(){
     vector<string> serverid;
     vector<vector<int>> qos(n);
     vector<int> place(m);
-    for (int i = 0; i < lines.size(); i++) {
+    for (int i = 0; i <= n; i++) {
         istringstream sin(lines[i]);
         int id = 0;
         if (i == 0){
@@ -108,7 +148,7 @@ int main(){
 
     getlines(lines, PATH + "/site_bandwidth.csv");
     vector<int> bandwidth(n);
-    for (int i = 1; i < lines.size(); i++) {
+    for (int i = 1; i < (int)lines.size(); i++) {
         istringstream sin(lines[i]);
         int id = 0, pos = 0;
         while (getline(sin, str, ',')) {
@@ -120,44 +160,86 @@ int main(){
     Config config(PATH + "/config.ini");
     int qos_constraint = config.Read("qos_constraint", 400);
     int base_cost = config.Read("base_cost", 0);
-    int realT = 1;
-    //base_cost = max(base_cost, 10);
-    for (int t = 1; t < T; t++) {
-        if (mtime[t] != mtime[t - 1]) realT++;
+    vector<pair<int, int>> intval;
+    for (int t = 0; t < T; t++) {
+        int l = t;
+        while (t + 1 < T && mtime[t + 1] == mtime[t]) t++;
+        intval.emplace_back(l, t);
     }
-    const int Limit = realT - (realT * 95 + 99) / 100;
-    vector<int> carry(n), cap(n), p(n);
-    vector<pair<int, int> > distb[m];
+    const int realT = intval.size(), Limit = realT - (realT * 95 + 99) / 100;
+
+    vector<vector<int>>g(n);
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < m; j++)
+            if (qos[i][j] < qos_constraint) g[i].push_back(j);
+    vector<int> deg(m);
+    vector<double> sdemand(m), esb(n);
+    for (int t = 0; t < T; t++)
+        for (int i = 0; i < m; i++)
+            sdemand[i] += demand[t][i];
+    for (int i = 0; i < m; i++) sdemand[i] /= realT;
+    for (int i = 0; i < n; i++) for (int j : g[i]) deg[j]++;
+    for (int i = 0; i < n; i++) for (int j : g[i]) esb[i] += sdemand[j] / deg[j];
+
+    vector<int> p(n);
+    for (int i = 0; i < n; i++) p[i] = i;
+    random_shuffle(p.begin(), p.end());
+    vector<vector<int> >carry(realT);
+    for (auto it = p.begin(); it != p.end(); ) {
+        int s = *it;
+        vector<pair<double, int>> bests;
+        for (int k = 0; k < realT; k++) {
+            double ws = 0;
+            for (int c : g[s])
+                for (int t = intval[k].first; t <= intval[k].second; t++) 
+                    if (!vis[t].count(c))
+                        ws += 1.0 * demand[t][c] / deg[c];
+            bests.push_back(make_pair(ws, k));
+        }
+        sort(bests.rbegin(), bests.rend());
+        if (bests[0].first < base_cost * 0.8 - eps) p.erase(it);
+        else{
+            for (int i = 0; i < Limit; i++) if (bests[i].first > eps){
+                int k = bests[i].second;
+                vector<pair<int, pair<int, int>> > can;
+                for (int c : g[s])
+                    for (int t = intval[k].first; t <= intval[k].second; t++) 
+                        if (!vis[t].count(c)) can.push_back(make_pair(demand[t][c], make_pair(t, c)));
+                sort(can.rbegin(), can.rend());
+                int tot = 0;
+                for (auto x : can){
+                    int wt = x.first;
+                    auto pr = x.second;
+                    if (tot + wt <= bandwidth[s]) tot += wt, vis[pr.first][pr.second] = true;
+                }
+                carry[bests[i].second].push_back(s);
+            }
+            it++;
+        }
+    }
+    vector<int> cap(n);
+    vector<long long> tot(n);
+    vector<vector<pair<int, int> > > distb(m);
     bool okay = false;
-    for (int i = 0; i < n; i++) cap[i] = base_cost, p[i] = i;
+    for (int i = 0; i < n; i++) cap[i] = base_cost;
     while (!okay){
         okay = true;
-        for (int i = 0; i < n; i++) carry[i] = 0;
-        
+        for (int i = 0; i < n; i++) tot[i] = 0;
+    
         #ifdef DEBUG
             for (int i = 0; i < n; i++) cout << cap[i] << ' ';
             cout << endl;
         #endif
 
         for (int i = 0; i < m; i++) distb[i].clear();
-        for (int t = 0; t < T; t++) {
-            int l = t;
-            while (t + 1 < T && mtime[t + 1] == mtime[t]) t++;
-            int re = work::solve(demand, qos, bandwidth, carry, distb, cap, p, n, m, l, t, Limit, qos_constraint, base_cost); 
+        for (int t = 0; t < realT; t++) {
+            int re = work::solve(demand, bandwidth, qos, g, deg, carry[t], distb, cap, p, tot, n, m, intval[t].first, intval[t].second, Limit, qos_constraint, base_cost); 
             if (re == -1) {
                 okay = false;
                 break;
             }
         }
-        if (okay){
-            double capsum = 0;
-            for (auto it = p.begin(); it != p.end();) {
-                capsum += cap[*it];
-                if (cap[*it] < base_cost * 0.8) okay = false, p.erase(it);
-                else ++it;
-            }
-        }
     }
-    output(mtime, distb, clientid, serverid, streamid, n, m, T);
-    
+    output(demand, bandwidth, mtime, distb, clientid, serverid, streamid, n, m, T, realT, base_cost);
+
 }

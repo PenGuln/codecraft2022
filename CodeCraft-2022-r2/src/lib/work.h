@@ -1,92 +1,70 @@
 namespace work{
     struct Request{
         int val, t, c;
-        double difficulty;
         bool operator < (const Request &b)const{
-            return difficulty > b.difficulty;
+            return val < b.val;
         }
     };
-    inline int F(int base, int bw, double rt){
-        return (int)(base * rt);
-    }
-    int solve(const vector<vector<int>>& demand, const vector<vector<int>>& qos, const vector<int>& bandwidth,
-              vector<int>& carry, vector<pair<int, int> > *distb, vector<int>& cap, vector<int>& p,
-              const int n, const int m, const int l, const int r, const int Limit, const int qos_constraint, const int base_cost, const double train_rate = 0.5){
+    int solve(const vector<vector<int>>& demand, const vector<int>& bandwidth,
+              const vector<vector<int>>& qos,
+              const vector<vector<int>>& g, const vector<int>& deg,
+              const vector<int>& carry,
+              vector<vector<pair<int, int> >> &distb, vector<int>& cap, vector<int>& p, vector<long long>&tot,
+              const int n, const int m, const int l, const int r, const int Limit, const int qos_constraint, const int base_cost, const double train_rate = 1.2){  
         const int pn = p.size();
-        vector<int> ss(n), resout(n);
+        vector<int> ss(n);
+        vector<double> resout(n);
         vector<bool> vis(n);
-        random_shuffle(p.begin(), p.end());
         vector<Request> req[2];
+        random_shuffle(p.begin(), p.end());
+
+        auto process = [&](vector<Request> &src, vector<Request> &dst, int s){
+            for (auto r : src) {
+                if (qos[s][r.c] < qos_constraint && ss[s] + r.val <= bandwidth[s]) {
+                    ss[s] += r.val;
+                    tot[s] += r.val;
+                    distb[r.c].emplace_back(r.t, s);
+                }else dst.push_back(r);
+            }
+            src.clear();
+        };
+
         for (int t = l; t <= r; t++) {
             for (int i = 0; i < m; i++) 
                 if (demand[t][i] > 0) {
-                    int cnt = 0;
-                    for (int server : p) {
-                        if (qos[server][i] < qos_constraint) cnt += cap[server] / demand[t][i];
-                    }
-                    req[0].push_back(Request{demand[t][i], t, i, 1.0 / cnt});
+                    req[0].push_back(Request{demand[t][i], t, i});
                 }
         }
-        sort(req[0].begin(), req[0].end());
-        for (auto r : req[0]){
-            bool fine = false;
-            int sel = p[rand() % pn];
-            if (qos[sel][r.c] < qos_constraint && ss[sel] + r.val <= min(bandwidth[sel], cap[sel])) {
-                ss[sel] += r.val;
-                distb[r.c].emplace_back(r.t, sel);
-                fine = true;
-            }
-            if (!fine){
-                for (int server : p) 
-                    if (qos[server][r.c] < qos_constraint && ss[server] + r.val <= min(bandwidth[server], cap[server])) {
-                        ss[server] += r.val;
-                        distb[r.c].emplace_back(r.t, server);
-                        fine = true;
-                        break;
-                    }
-            }
-            if (!fine) req[1].push_back(r);
-        }
-        req[0].clear();
-        int seq = 1;
-        while (!req[0].empty() || !req[1].empty()){
-            for (int i = 0; i < n; i++) resout[i] = 0;
-            for (auto r : req[seq]) {
-                for (int server : p) 
-                    if (qos[server][r.c] < qos_constraint) resout[server] += r.val;
-            }
-            for (int i = 0; i < n; i++) resout[i] = min(resout[i], bandwidth[i] - ss[i]);
-            sort(p.begin(), p.end(), [&](int x, int y){
-                return resout[x] > resout[y];
-            });
+
+        sort(req[0].rbegin(), req[0].rend());
+        int seq = 0;
+        for (int s : carry) process(req[seq], req[seq ^ 1], s), seq ^= 1; 
+        for (auto r : req[seq]){
             int sel = -1;
-            for (int server : p) if (carry[server] < Limit && !vis[server]) {
-                sel = server;
-                vis[server] = true;
-                carry[server]++;
-                break;
+            for (int s : p) if (qos[s][r.c] < qos_constraint && ss[s] + r.val <= cap[s]) {
+                if (sel == -1) sel = s;
+                else if (cap[s] - ss[s] > cap[sel] - ss[sel]) sel = s;
             }
-            if (sel == -1) {
-                for (auto r : req[seq]) {
-                    int sel = p[rand() % pn];
-                    while (!(qos[sel][r.c] < qos_constraint && ss[sel] + r.val <= bandwidth[sel])) sel = p[rand() % pn];
-                    ss[sel] += r.val;
-                    cap[sel] = max(cap[sel], ss[sel]);
-                }
-                return -1;
-            }
-            for (auto r : req[seq]) {
-                if (qos[sel][r.c] < qos_constraint && ss[sel] + r.val <= bandwidth[sel]) {
-                    ss[sel] += r.val;
-                    distb[r.c].emplace_back(r.t, sel);
-                }else{
-                    req[seq ^ 1].push_back(r);
-                }
-            }
-            req[seq].clear();
-            seq ^= 1;
+            if (sel >= 0){
+                ss[sel] += r.val;
+                tot[sel] += r.val;
+                distb[r.c].emplace_back(r.t, sel);
+            }else req[seq ^ 1].push_back(r);
         }
-        
+        seq ^= 1;
+        if (!req[seq].empty()){
+            for (auto r : req[seq]) {
+                sort(p.begin(), p.end(), [&](int x, int y){
+                    return 1LL * (cap[x] - base_cost) * bandwidth[y] < 1LL * (cap[y] - base_cost) * bandwidth[x];
+                });
+                for (int i = 0; i < pn; i++) if (qos[p[i]][r.c] < qos_constraint && ss[p[i]] + r.val <= bandwidth[p[i]]) {
+                    ss[p[i]] += r.val;
+                    cap[p[i]] = max(cap[p[i]], ss[p[i]]);
+                    break;
+                }
+            }
+            return -1;
+        }
         return 1;
     }
 }
