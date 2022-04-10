@@ -11,7 +11,7 @@
 #include <cassert>
 #include "config.h"
 #include "work.h"
-#define DEBUG
+//#define DEBUG
 using namespace std;
 const double eps = 1e-8;
 #ifdef DEBUG
@@ -38,7 +38,10 @@ void output(const vector<vector<int>>& demand, const vector<int>& bandwidth,
     vector<vector<int> > K(n);
     ofstream fout("/output/solution.txt"); 
     for (int i = 0; i < m; i++) ps[i] = distb[i].begin();
-    
+    vector<int> p(n);
+    for (int i = 0; i < n; i++) p[i] = i;
+    random_shuffle(p.begin(), p.end());
+    for (int i = 0; i < 10; i++) fout << serverid[p[i]] << ",\n"[i == 9];
     #ifdef DEBUG
         vector<int> ck(m);
         for (int t = 0; t < T; t++) 
@@ -197,7 +200,7 @@ int main(){
             bests.push_back(make_pair(ws, k));
         }
         sort(bests.rbegin(), bests.rend());
-        if (bests[0].first < base_cost * 0.8 - eps) p.erase(it);
+        if (bests[0].first < base_cost * 0.0 - eps) p.erase(it); // here you can delete those servers which are ignorable
         else{
             for (int i = 0; i < Limit; i++) if (bests[i].first > eps){
                 int k = bests[i].second;
@@ -220,9 +223,11 @@ int main(){
     vector<int> cap(n);
     vector<long long> tot(n);
     vector<vector<pair<int, int> > > distb(m);
+    vector<vector<int>> load(n);
+    for (int i = 0; i < n; i++) load[i].resize(realT);
     bool okay = false;
     for (int i = 0; i < n; i++) cap[i] = base_cost;
-    while (!okay){
+    for (int iteration = 0; ; iteration++){
         okay = true;
         for (int i = 0; i < n; i++) tot[i] = 0;
     
@@ -233,11 +238,32 @@ int main(){
 
         for (int i = 0; i < m; i++) distb[i].clear();
         for (int t = 0; t < realT; t++) {
-            int re = work::solve(demand, bandwidth, qos, g, deg, carry[t], distb, cap, p, tot, n, m, intval[t].first, intval[t].second, Limit, qos_constraint, base_cost); 
-            if (re == -1) {
-                okay = false;
-                break;
+            int re = work::solve(demand, bandwidth, qos, carry[t], distb, cap, p, tot, n, m, intval[t].first, intval[t].second, Limit, qos_constraint, base_cost); 
+            if (re == -1) okay = false;
+        }
+        if (okay && iteration >= 5) break;
+
+        //clear carry and solve
+        for (int i = 0; i < n; i++) cap[i] = cap[i] * 0.8;
+        for (int t = 0; t < realT; t++) {
+            carry[t].clear();
+            work::solve_record_load(demand, bandwidth, qos, carry[t], cap, p, load, n, m, t, intval[t].first, intval[t].second, Limit, qos_constraint, base_cost);
+        }
+
+        //recalculate carry
+        random_shuffle(p.begin(), p.end());
+        for (auto it = p.begin(); it != p.end(); ) {
+            int s = *it;
+            vector<pair<int, int> > tmp(realT);
+            for (int i = 0; i < realT; i++) tmp[i] = make_pair(load[s][i], i);
+            sort(tmp.rbegin(), tmp.rend());
+            for (int i = 0; i < Limit; i++) {
+                int ti = tmp[i].second;
+                carry[ti].push_back(s);
+                work::solve_record_load(demand, bandwidth, qos, carry[ti], cap, p, load, n, m, ti, intval[ti].first, intval[ti].second, Limit, qos_constraint, base_cost);
+                //recalculate server load after allocating one carry
             }
+            it++;
         }
     }
     output(demand, bandwidth, mtime, distb, clientid, serverid, streamid, n, m, T, realT, base_cost);
