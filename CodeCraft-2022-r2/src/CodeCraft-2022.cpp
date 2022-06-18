@@ -98,7 +98,6 @@ int main(){
     vector<string> lines;
     getlines(lines, PATH + "/demand.csv");
     const int T = lines.size() - 1;
-    //cout << T << endl;
     vector<string> clientid;
     vector<vector<int>> demand(T);
     vector<string> mtime(T), streamid(T);
